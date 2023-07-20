@@ -1,11 +1,9 @@
 import torch
 
-from .habitat import construct_envs
 
-
-def make_vec_envs(args):
-    envs = construct_envs(args)
-    envs = VecPyTorch(envs, args.device)
+def make_vec_envs(args, is_slurm=False, is_eval=False):
+    envs, num_envs = construct_envs(args, is_slurm, is_eval)
+    envs = VecPyTorch(envs, num_envs, args.device)
     return envs
 
 
@@ -13,11 +11,11 @@ def make_vec_envs(args):
 # https://github.com/ikostrikov/pytorch-a2c-ppo-acktr-gail/blob/master/a2c_ppo_acktr/envs.py#L159
 class VecPyTorch():
 
-    def __init__(self, venv, device):
+    def __init__(self, venv, num_envs, device):
         self.venv = venv
-        self.num_envs = venv.num_envs
-        self.observation_space = venv.observation_space
-        self.action_space = venv.action_space
+        self.num_envs = num_envs
+        # self.observation_space = venv.observation_space
+        # self.action_space = venv.action_space
         self.device = device
 
     def reset(self):

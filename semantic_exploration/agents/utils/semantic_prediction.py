@@ -4,23 +4,20 @@
 
 import argparse
 import time
-
-import torch
+from pathlib import Path
+import detectron2.data.transforms as T
 import numpy as np
-
+import torch
+from third_party.semantic_exploration.constants import coco_categories_mapping
+from detectron2.checkpoint import DetectionCheckpointer
 from detectron2.config import get_cfg
-from detectron2.utils.logger import setup_logger
 from detectron2.data.catalog import MetadataCatalog
 from detectron2.modeling import build_model
-from detectron2.checkpoint import DetectionCheckpointer
+from detectron2.utils.logger import setup_logger
 from detectron2.utils.visualizer import ColorMode, Visualizer
-import detectron2.data.transforms as T
-
-from constants import coco_categories_mapping
 
 
-class SemanticPredMaskRCNN():
-
+class SemanticPredMaskRCNN:
     def __init__(self, args):
         self.segmentation_model = ImageSegmentation(args)
         self.args = args
@@ -31,39 +28,48 @@ class SemanticPredMaskRCNN():
         img = img[:, :, ::-1]
         image_list.append(img)
         seg_predictions, vis_output = self.segmentation_model.get_predictions(
-            image_list, visualize=args.visualize == 2)
+            image_list, visualize=args.visualize == 2
+        )
 
         if args.visualize == 2:
             img = vis_output.get_image()
 
-        semantic_input = np.zeros((img.shape[0], img.shape[1], 15 + 1))
+        semantic_input = np.zeros(
+            (img.shape[0], img.shape[1], 16 + 1)
+        )  # self.args.num_sem_categories )) #15 + 1))
 
         for j, class_idx in enumerate(
-                seg_predictions[0]['instances'].pred_classes.cpu().numpy()):
+            seg_predictions[0]["instances"].pred_classes.cpu().numpy()
+        ):
             if class_idx in list(coco_categories_mapping.keys()):
                 idx = coco_categories_mapping[class_idx]
-                obj_mask = seg_predictions[0]['instances'].pred_masks[j] * 1.
+                obj_mask = seg_predictions[0]["instances"].pred_masks[j] * 1.0
                 semantic_input[:, :, idx] += obj_mask.cpu().numpy()
-
+        # The shape of the semantic input is (480, 640, 17)
         return semantic_input, img
 
 
 def compress_sem_map(sem_map):
     c_map = np.zeros((sem_map.shape[1], sem_map.shape[2]))
     for i in range(sem_map.shape[0]):
-        c_map[sem_map[i] > 0.] = i + 1
+        c_map[sem_map[i] > 0.0] = i + 1
     return c_map
 
 
-class ImageSegmentation():
+class ImageSegmentation:
     def __init__(self, args):
+        ROOT = str(Path(__file__).resolve().parent).split("third_party")[0]+"third_party/"
+        model_path = ROOT + "detectron2/configs/COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml"
         string_args = """
-            --config-file configs/COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml
+            --config-file {}
             --input input1.jpeg
             --confidence-threshold {}
             --opts MODEL.WEIGHTS
             detectron2://COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x/137849600/model_final_f10217.pkl
-            """.format(args.sem_pred_prob_thr)
+            """.format(
+            model_path,
+            args.sem_pred_prob_thr
+        )
 
         if args.sem_gpu_id == -2:
             string_args += """ MODEL.DEVICE cpu"""
@@ -71,7 +77,6 @@ class ImageSegmentation():
             string_args += """ MODEL.DEVICE cuda:{}""".format(args.sem_gpu_id)
 
         string_args = string_args.split()
-
         args = get_seg_parser().parse_args(string_args)
         logger = setup_logger()
         logger.info("Arguments: " + str(args))
@@ -91,15 +96,15 @@ def setup_cfg(args):
     # Set score_threshold for builtin models
     cfg.MODEL.RETINANET.SCORE_THRESH_TEST = args.confidence_threshold
     cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = args.confidence_threshold
-    cfg.MODEL.PANOPTIC_FPN.COMBINE.INSTANCES_CONFIDENCE_THRESH = \
+    cfg.MODEL.PANOPTIC_FPN.COMBINE.INSTANCES_CONFIDENCE_THRESH = (
         args.confidence_threshold
+    )
     cfg.freeze()
     return cfg
 
 
 def get_seg_parser():
-    parser = argparse.ArgumentParser(
-        description="Detectron2 demo for builtin models")
+    parser = argparse.ArgumentParser(description="Detectron2 demo for builtin models")
     parser.add_argument(
         "--config-file",
         default="configs/quick_schedules/mask_rcnn_R_50_FPN_inference_acc_test.yaml",
@@ -107,14 +112,12 @@ def get_seg_parser():
         help="path to config file",
     )
     parser.add_argument(
-        "--webcam",
-        action="store_true",
-        help="Take inputs from webcam.")
+        "--webcam", action="store_true", help="Take inputs from webcam."
+    )
     parser.add_argument("--video-input", help="Path to video file.")
     parser.add_argument(
-        "--input",
-        nargs="+",
-        help="A list of space separated input images")
+        "--input", nargs="+", help="A list of space separated input images"
+    )
     parser.add_argument(
         "--output",
         help="A file or directory to save output visualizations. "
@@ -124,7 +127,7 @@ def get_seg_parser():
     parser.add_argument(
         "--confidence-threshold",
         type=float,
-        default=0.5,
+        default=0.1,
         help="Minimum score for instance predictions to be shown",
     )
     parser.add_argument(
@@ -169,7 +172,8 @@ class VisualizationDemo(object):
             predictions = all_predictions[0]
             image = image_list[0]
             visualizer = Visualizer(
-                image, self.metadata, instance_mode=self.instance_mode)
+                image, self.metadata, instance_mode=self.instance_mode
+            )
             if "panoptic_seg" in predictions:
                 panoptic_seg, segments_info = predictions["panoptic_seg"]
                 vis_output = visualizer.draw_panoptic_seg_predictions(
@@ -178,13 +182,13 @@ class VisualizationDemo(object):
             else:
                 if "sem_seg" in predictions:
                     vis_output = visualizer.draw_sem_seg(
-                        predictions["sem_seg"].argmax(
-                            dim=0).to(self.cpu_device)
+                        predictions["sem_seg"].argmax(dim=0).to(self.cpu_device)
                     )
                 if "instances" in predictions:
                     instances = predictions["instances"].to(self.cpu_device)
                     vis_output = visualizer.draw_instance_predictions(
-                        predictions=instances)
+                        predictions=instances
+                    )
 
         return all_predictions, vis_output
 
